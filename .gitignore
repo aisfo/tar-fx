@@ -9,4 +9,5 @@
 .externalNativeBuild
 node_modules
 gradle/
+local.properties
 .idea/
