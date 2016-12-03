@@ -1,14 +1,21 @@
 package com.amirgu.tarfx;
 
+import android.app.Activity;
+import android.graphics.Canvas;
 import android.os.Bundle;
-import com.facebook.react.ReactActivity;
+import android.support.v7.app.AppCompatActivity;
 
-public class MainActivity extends ReactActivity
+public class MainActivity extends Activity
 {
+
+    CanvasView canvas;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_main);
 
+        canvas = (CanvasView)findViewById(R.id.drawing);
         AudioProcessor.initialize();
     }
 
@@ -17,12 +24,14 @@ public class MainActivity extends ReactActivity
         super.onResume();
 
         AudioProcessor.start();
+        canvas.start();
     }
 
     @Override
     protected void onPause() {
         super.onPause();
 
+        canvas.stop();
         AudioProcessor.stop();
     }
 
@@ -33,11 +42,6 @@ public class MainActivity extends ReactActivity
         AudioProcessor.destroy();
     }
 
-
-    @Override
-    protected String getMainComponentName() {
-        return "TarFX";
-    }
 
 
 }

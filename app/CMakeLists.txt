@@ -20,6 +20,18 @@ add_library( # Sets the name of the library.
              # file are automatically included.
              src/main/cpp/AudioProcessor.cpp )
 
+add_library( # Sets the name of the library.
+          KissFFT
+
+          # Sets the library as a shared library.
+          SHARED
+
+          # Provides a relative path to your source file(s).
+          # Associated headers in the same location as their source
+          # file are automatically included.
+          libs/kiss_fft/kiss_fft.c )
+
+
 # Searches for a specified prebuilt library and stores the path as a
 # variable. Because system libraries are included in the search path by
 # default, you only need to specify the name of the public NDK library
@@ -36,6 +48,7 @@ find_library(log-lib log)
 
 target_link_libraries( # Specifies the target library.
                        AudioProcessor
+                       KissFFT
 
                        # Links the target library to the log library
                        # included in the NDK.

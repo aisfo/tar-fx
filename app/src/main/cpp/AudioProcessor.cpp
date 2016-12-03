@@ -1,33 +1,54 @@
 #include "AudioProcessor.h"
+#include <math.h>
+#include "../../../libs/kiss_fft/kiss_fft.h"
+#include <thread>         // std::this_thread::sleep_for
+#include <chrono>         // std::chrono::seconds
 
-
+double * lfo;
 
 static void record_callback(SLAndroidSimpleBufferQueueItf bq, void *context)
 {
-    if (bufferIndex == 1) {
-        bufferIndex = 2;
-        (*player_buf_q)->Enqueue(player_buf_q, buffer_1, bufSize);
-        (*recorder_buf_q)->Enqueue(recorder_buf_q, buffer_2, bufSize);
-    } else {
-        bufferIndex = 1;
-        (*player_buf_q)->Enqueue(player_buf_q, buffer_2, bufSize);
-        (*recorder_buf_q)->Enqueue(recorder_buf_q, buffer_1, bufSize);
+    memcpy(circular_buffer + write_head, buffer_in, frame_size);
+    write_head = (write_head + frame_width) % circular_size;
+
+    (*recorder_buf_q)->Enqueue(recorder_buf_q, buffer_in, bufSize);
+
+    if (write_head == frame_width * 2 && !start_playback) {
+        start_playback = true;
+        (*player_buf_q)->Enqueue(player_buf_q, buffer_out, bufSize);
     }
 }
 
+
 static void player_callback(SLAndroidSimpleBufferQueueItf bq, void *context)
 {
+    while((write_head - read_head <= frame_width) && (write_head - read_head >= 0)) {
+        LOG("%d %d", write_head, read_head);
+        std::this_thread::sleep_for (std::chrono::milliseconds(10));
+    }
+
+    for (int i = 0; i < frame_width; i++) {
+        int sample_idx = read_head + i;
+        buffer_out[i] = circular_buffer[sample_idx % circular_size];
+        buffer_out[i] += circular_buffer[(circular_size + sample_idx - 1500) % circular_size] * lfo[sample_idx % circular_size];
+        buffer_out[i] += circular_buffer[(circular_size + sample_idx - 1000) % circular_size] * lfo[sample_idx % circular_size];
+        buffer_out[i] += circular_buffer[(circular_size + sample_idx - 500) % circular_size] * lfo[sample_idx % circular_size];
+        buffer_out[i] *= 0.25;
+    }
+  //  memcpy(buffer_out, circular_buffer + read_head, frame_size);
+    read_head = (read_head + frame_width) % circular_size;
+
+    (*player_buf_q)->Enqueue(player_buf_q, buffer_out, bufSize);
 }
+
 
 
 extern "C" {
 
 
-void Java_com_amirgu_tarfx_AudioProcessor_initialize(JNIEnv *env, jobject)
+void Java_com_amirgu_tarfx_AudioProcessor_initialize(JNIEnv *env, jobject obj)
 {
     SLresult result;
-
-    bufSize = FRAMES_PER_BUF * NUM_CHANNELS * SL_PCMSAMPLEFORMAT_FIXED_16 / BITS_PER_BYTE;
 
     SLDataFormat_PCM format;
     format.formatType = SL_DATAFORMAT_PCM;
@@ -38,9 +59,19 @@ void Java_com_amirgu_tarfx_AudioProcessor_initialize(JNIEnv *env, jobject)
     format.channelMask = SL_SPEAKER_FRONT_CENTER;
     format.endianness = SL_BYTEORDER_LITTLEENDIAN;
 
-    buffer_1 = (short *) calloc(FRAMES_PER_BUF * NUM_CHANNELS, sizeof(short));
-    buffer_2 = (short *) calloc(FRAMES_PER_BUF * NUM_CHANNELS, sizeof(short));
+    buffer_in = (short *) calloc(frame_width, sizeof(short));
+    buffer_out = (short *) calloc(frame_width, sizeof(short));
+    circular_buffer = (short *) calloc(circular_size, sizeof(short));
 
+    LOG("%d %lu %lu", circular_buffer, circular_size, frame_size);
+
+
+    lfo = (double *) calloc(circular_size, sizeof(double));
+    int freq = 1 * CIRCULAR_DURATION;
+    double step = 2 * M_PI * freq / (circular_size);
+    for (int i = 0; i < circular_size; i++) {
+        lfo[i] = sin(-M_PI * freq + step * i);
+    }
 
     // CREATE ENGINE
 
@@ -107,7 +138,6 @@ void Java_com_amirgu_tarfx_AudioProcessor_initialize(JNIEnv *env, jobject)
     result = (*recorder_buf_q)->RegisterCallback(recorder_buf_q, record_callback, nullptr);
     ASSERT(result);
 
-
     LOG("init success");
 }
 
@@ -119,14 +149,18 @@ void Java_com_amirgu_tarfx_AudioProcessor_start(JNIEnv *env, jobject)
     ASSERT_NOT_NULL(player);
     ASSERT_NOT_NULL(recorder);
 
+    start_playback = false;
+    write_head = 0;
+    read_head = 0;
+
     result = (*player)->SetPlayState(player, SL_PLAYSTATE_PLAYING);
     ASSERT(result);
 
     result = (*recorder)->SetRecordState(recorder, SL_RECORDSTATE_RECORDING);
     ASSERT(result);
 
-    bufferIndex = 1;
-    (*recorder_buf_q)->Enqueue(recorder_buf_q, buffer_1, bufSize);
+    (*recorder_buf_q)->Enqueue(recorder_buf_q, buffer_in, bufSize);
+    (*player_buf_q)->Enqueue(recorder_buf_q, buffer_out, bufSize);
 
     LOG("start success");
 }
@@ -171,8 +205,19 @@ void Java_com_amirgu_tarfx_AudioProcessor_destroy(JNIEnv *env, jobject)
         recorder = NULL;
     }
 
-    free(buffer_1);
-    free(buffer_2);
+    free(buffer_in);
+    free(buffer_out);
+    free(circular_buffer);
+    free(lfo);
+}
+
+
+jshortArray Java_com_amirgu_tarfx_AudioProcessor_readBuffer(JNIEnv *env, jobject)
+{
+    jshortArray result;
+    result = env->NewShortArray(frame_width);
+    env->SetShortArrayRegion(result, 0, frame_width, buffer_out);
+    return result;
 }
 
 
