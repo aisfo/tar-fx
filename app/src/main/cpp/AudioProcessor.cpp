@@ -1,10 +1,48 @@
-#include "AudioProcessor.h"
-#include <math.h>
-#include "../../../libs/kiss_fft/kiss_fft.h"
-#include <thread>         // std::this_thread::sleep_for
-#include <chrono>         // std::chrono::seconds
 
-double * lfo;
+#include "AudioProcessor.h"
+
+
+#define ASSERT(X) assert(X == SL_RESULT_SUCCESS)
+#define ASSERT_NOT_NULL(X) assert(X != NULL)
+
+SLObjectItf engine_obj;
+SLEngineItf engine;
+
+SLObjectItf output_mix_obj;
+
+SLObjectItf player_obj;
+SLPlayItf player;
+
+SLObjectItf recorderObject;
+SLRecordItf recorder;
+
+SLAndroidSimpleBufferQueueItf player_buf_q;
+SLAndroidSimpleBufferQueueItf recorder_buf_q;
+
+
+bool start_playback;
+long write_head;
+long read_head;
+
+
+short * circular_buffer;
+short * buffer_in;
+short * buffer_out;
+float * lfo;
+
+
+int frame_width = FRAMES_PER_BUF * NUM_CHANNELS;
+int frame_size = frame_width * sizeof(short);
+long circular_size = frame_width * (SAMPLE_RATE/frame_width) * CIRCULAR_DURATION;
+int bufSize = frame_width * SL_PCMSAMPLEFORMAT_FIXED_16 / BITS_PER_BYTE;
+
+
+Effect * effect_buffer;
+Effect * effect_delay;
+Effect * effect_chorus;
+
+
+
 
 static void record_callback(SLAndroidSimpleBufferQueueItf bq, void *context)
 {
@@ -29,13 +67,11 @@ static void player_callback(SLAndroidSimpleBufferQueueItf bq, void *context)
 
     for (int i = 0; i < frame_width; i++) {
         int sample_idx = read_head + i;
-        buffer_out[i] = circular_buffer[sample_idx % circular_size];
-        buffer_out[i] += circular_buffer[(circular_size + sample_idx - 1500) % circular_size] * lfo[sample_idx % circular_size];
-        buffer_out[i] += circular_buffer[(circular_size + sample_idx - 1000) % circular_size] * lfo[sample_idx % circular_size];
-        buffer_out[i] += circular_buffer[(circular_size + sample_idx - 500) % circular_size] * lfo[sample_idx % circular_size];
-        buffer_out[i] *= 0.25;
+        buffer_out[i] = read(effect_buffer, sample_idx) * 0.6;
+        //buffer_out[i] += read(effect_delay, sample_idx) * 0.1;
+        buffer_out[i] += read(effect_chorus, sample_idx) * 0.3;
+        buffer_out[i] *= 2;
     }
-  //  memcpy(buffer_out, circular_buffer + read_head, frame_size);
     read_head = (read_head + frame_width) % circular_size;
 
     (*player_buf_q)->Enqueue(player_buf_q, buffer_out, bufSize);
@@ -66,12 +102,12 @@ void Java_com_amirgu_tarfx_AudioProcessor_initialize(JNIEnv *env, jobject obj)
     LOG("%d %lu %lu", circular_buffer, circular_size, frame_size);
 
 
-    lfo = (double *) calloc(circular_size, sizeof(double));
-    int freq = 1 * CIRCULAR_DURATION;
-    double step = 2 * M_PI * freq / (circular_size);
-    for (int i = 0; i < circular_size; i++) {
-        lfo[i] = sin(-M_PI * freq + step * i);
-    }
+
+    // EFFECTS
+
+    effect_buffer = initializeBuffer(circular_buffer, circular_size);
+    effect_delay = initializeDelay(effect_buffer, 0.02, circular_size);
+    effect_chorus = initializeChorus(effect_buffer, 0.04, 4, circular_size);
 
     // CREATE ENGINE
 
@@ -209,6 +245,10 @@ void Java_com_amirgu_tarfx_AudioProcessor_destroy(JNIEnv *env, jobject)
     free(buffer_out);
     free(circular_buffer);
     free(lfo);
+
+    destroyEffect(effect_delay);
+    destroyEffect(effect_buffer);
+    destroyEffect(effect_chorus);
 }
 
 
